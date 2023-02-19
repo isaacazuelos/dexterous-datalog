@@ -2,7 +2,11 @@
 
 A [Datalog][0] implementation with no sinister secrets.
 
+Originally written in 48 hours as part of [LangJam][5]. I just wanted a bit
+more time to see if I could get a few unfinished things working.
+
 [0]: https://en.wikipedia.org/wiki/Datalog
+[5]: https://github.com/langjam/jam0004
 
 It's Datalog but it won't let you use any identifier with letters typed with
 your left hand on QWERTY. If it sees any left-handed letters, it skips them.
