@@ -26,6 +26,9 @@ struct Args {
 
     #[arg(long, value_enum, default_value_t)]
     filter: Filter,
+
+    #[arg(long, short, conflicts_with = "query")]
+    repl: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, ValueEnum, PartialEq, Eq, PartialOrd, Ord)]
@@ -80,8 +83,11 @@ fn main() -> Result<()> {
 
     if let Some(query) = args.query {
         cli_query(query, data, filter)
-    } else {
+    } else if args.repl {
         repl(data, filter)
+    } else {
+        println!("{data}");
+        Ok(())
     }
 }
 
