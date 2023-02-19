@@ -1,5 +1,5 @@
 use chumsky::Parser as ChumskyParser;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 use miette::{Diagnostic, GraphicalReportHandler, IntoDiagnostic, NamedSource, Report, Result};
 use rustyline::{error::ReadlineError, Editor};
@@ -23,6 +23,30 @@ struct Args {
     /// A query to run. If this is not specified, a repl is started.
     #[arg(short, long)]
     query: Option<String>,
+
+    #[arg(long, value_enum, default_value_t)]
+    filter: Filter,
+}
+
+#[derive(Debug, Default, Clone, Copy, ValueEnum, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Filter {
+    Off,
+    #[default]
+    Qwerty,
+    Dvorak,
+    Colemak,
+}
+
+impl Filter {
+    pub fn is_allowed(&self, c: char) -> bool {
+        let blocked = match self {
+            Filter::Off => "",
+            Filter::Qwerty => "qwertasdfgzxczvb123456",
+            Filter::Dvorak => "aoeuptqjkx123456",
+            Filter::Colemak => "qwfpgarstdzxcvb12345",
+        };
+        !blocked.contains(c.to_ascii_lowercase())
+    }
 }
 
 fn main() -> Result<()> {
@@ -30,13 +54,17 @@ fn main() -> Result<()> {
 
     let mut data = DataSet::default();
 
+    let filter = args.filter;
+
     if let Some(filename) = args.filename.as_deref() {
         let input = fs::read_to_string(filename).into_diagnostic()?;
 
-        let program = parser::program().parse(input.as_str()).map_err(|errors| {
-            Report::from(Error::from(errors))
-                .with_source_code(NamedSource::new(filename.to_string_lossy(), input))
-        })?;
+        let program = parser::program(filter)
+            .parse(input.as_str())
+            .map_err(|errors| {
+                Report::from(Error::from(errors))
+                    .with_source_code(NamedSource::new(filename.to_string_lossy(), input))
+            })?;
 
         data.add_program(&program)?;
 
@@ -51,14 +79,14 @@ fn main() -> Result<()> {
     data.run();
 
     if let Some(query) = args.query {
-        cli_query(query, data)
+        cli_query(query, data, filter)
     } else {
-        repl(data)
+        repl(data, filter)
     }
 }
 
-fn cli_query(query: String, mut data: DataSet) -> Result<()> {
-    let query = parser::query_no_prompt()
+fn cli_query(query: String, mut data: DataSet, filter: Filter) -> Result<()> {
+    let query = parser::query_no_prompt(filter)
         .parse(query.as_str())
         .map_err(|errors| {
             Report::from(Error::from(errors)).with_source_code(NamedSource::new("--query", query))
@@ -68,7 +96,7 @@ fn cli_query(query: String, mut data: DataSet) -> Result<()> {
     Ok(())
 }
 
-fn repl(mut data: DataSet) -> Result<()> {
+fn repl(mut data: DataSet, filter: Filter) -> Result<()> {
     let mut rl = Editor::<()>::new().into_diagnostic()?;
     let mut line_count = 1;
     let handler = GraphicalReportHandler::new();
@@ -79,7 +107,7 @@ fn repl(mut data: DataSet) -> Result<()> {
 
         match line {
             Ok(line) => {
-                if let Err(error) = repl_step(&line, &mut data) {
+                if let Err(error) = repl_step(&line, &mut data, filter) {
                     if line == "quit" || line == "exit" {
                         println!("hint: use control-d to leave");
                     }
@@ -113,8 +141,8 @@ fn repl(mut data: DataSet) -> Result<()> {
     }
 }
 
-fn repl_step(input: &str, data: &mut DataSet) -> Result<(), Error> {
-    let syntax = parser::repl()
+fn repl_step(input: &str, data: &mut DataSet, filter: Filter) -> Result<(), Error> {
+    let syntax = parser::repl(filter)
         .parse(input)
         .map_err(|errors| (Error::from(errors)))?;
 

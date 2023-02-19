@@ -36,7 +36,7 @@ don't try anything to big.
 It'll also start up a REPL unless you pass a `--query` argument, but since
 queries are incomplete, there's not much to do.
 
-Try `--help` too.
+Try `--help` too for more.
 
 ### Screenshot
 
@@ -49,11 +49,6 @@ Here's what this looks like _working on my machine™️_.
 - Queries aren't run, sadly. This would be almost identical to
   `data_set::Rule::next` too, but I just didn't have the time. Adding rules
   from the REPL would be pretty easy too.
-
-- I wanted to add command line options to support different keyboard layouts,
-  and maybe turn off the filter. Again, time constraints got to me. The
-  skipping code is in `parser::name` if you want to try this with it off --
-  just remove the `.map(...)`.
 
 - The 'left-handed' warning isn't really printing. Not quite sure what I'm
   doing wrong with `miette`'s `#[related]` here. I pulled it out at the last

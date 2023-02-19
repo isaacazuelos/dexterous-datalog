@@ -1,8 +1,10 @@
 //! The worlds dumbest parser for datalog!
 
-use core::fmt;
+use std::fmt;
 
 use chumsky::prelude::*;
+
+use crate::Filter;
 
 pub type Program = Vec<Statement>;
 
@@ -49,17 +51,31 @@ pub struct Const(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Var(pub String);
 
-pub fn repl() -> impl Parser<char, Repl, Error = Simple<char>> {
-    program()
+pub fn repl(filter: Filter) -> impl Parser<char, Repl, Error = Simple<char>> {
+    program(filter)
         .map(|p| Repl::Program(p))
-        .or(query().map(|q| Repl::Query(q)))
+        .or(query(filter).map(|q| Repl::Query(q)))
 }
 
-pub fn program() -> impl Parser<char, Program, Error = Simple<char>> {
-    statement()
+pub fn program(filter: Filter) -> impl Parser<char, Program, Error = Simple<char>> {
+    statement(filter)
         .separated_by(just('.').padded())
         .allow_trailing()
         .then_ignore(end())
+}
+
+pub fn query(filter: Filter) -> impl Parser<char, Query, Error = Simple<char>> {
+    just("?-")
+        .padded()
+        .then(query_no_prompt(filter))
+        .map(|(_, q)| q)
+}
+
+pub fn query_no_prompt(filter: Filter) -> impl Parser<char, Query, Error = Simple<char>> {
+    atom(filter)
+        .separated_by(just(',').padded())
+        .map(|atoms| Query(atoms))
+        .then_ignore(end().or(just(".").ignored().then_ignore(end())))
 }
 
 // A name looks like a constant if there's at least one letter, and all letters
@@ -71,13 +87,10 @@ fn is_constant_name(name: &str) -> bool {
             .all(|c| !c.is_ascii_alphabetic() || c.is_ascii_lowercase())
 }
 
-fn name() -> impl Parser<char, String, Error = Simple<char>> {
-    fn is_not_sinister(c: &char) -> bool {
-        !r#"qwertasdfgzxcvbQWERTASDFGZXCVB12345!@#$%~`"#.contains(*c)
-    }
+fn name(filter: Filter) -> impl Parser<char, String, Error = Simple<char>> {
+    text::ident().padded().map(move |name: String| {
+        let left: String = name.chars().filter(|c| filter.is_allowed(*c)).collect();
 
-    text::ident().padded().map(|name: String| {
-        let left: String = name.chars().filter(is_not_sinister).collect();
         if left.is_empty() {
             "no".into()
         } else {
@@ -86,8 +99,8 @@ fn name() -> impl Parser<char, String, Error = Simple<char>> {
     })
 }
 
-fn term() -> impl Parser<char, Term, Error = Simple<char>> {
-    name().map(|n| {
+fn term(filter: Filter) -> impl Parser<char, Term, Error = Simple<char>> {
+    name(filter).map(|n| {
         if is_constant_name(&n) {
             Term::Const(Const(n))
         } else {
@@ -96,8 +109,8 @@ fn term() -> impl Parser<char, Term, Error = Simple<char>> {
     })
 }
 
-fn constant() -> impl Parser<char, Const, Error = Simple<char>> {
-    name().validate(|n, span, emit| {
+fn constant(filter: Filter) -> impl Parser<char, Const, Error = Simple<char>> {
+    name(filter).validate(|n, span, emit| {
         if !is_constant_name(&n) {
             emit(Simple::custom(
                 span,
@@ -108,8 +121,8 @@ fn constant() -> impl Parser<char, Const, Error = Simple<char>> {
     })
 }
 
-fn relation() -> impl Parser<char, Relation, Error = Simple<char>> {
-    name().validate(|n, span, emit| {
+fn relation(filter: Filter) -> impl Parser<char, Relation, Error = Simple<char>> {
+    name(filter).validate(|n, span, emit| {
         if !is_constant_name(&n) {
             emit(Simple::custom(
                 span,
@@ -120,10 +133,10 @@ fn relation() -> impl Parser<char, Relation, Error = Simple<char>> {
     })
 }
 
-fn fact() -> impl Parser<char, Fact, Error = Simple<char>> {
-    relation()
+fn fact(filter: Filter) -> impl Parser<char, Fact, Error = Simple<char>> {
+    relation(filter)
         .then(
-            constant()
+            constant(filter)
                 .separated_by(just(',').padded())
                 .allow_trailing()
                 .delimited_by(just('(').padded(), just(')').padded()),
@@ -131,10 +144,10 @@ fn fact() -> impl Parser<char, Fact, Error = Simple<char>> {
         .map(|(relation, terms)| Fact(relation, terms))
 }
 
-fn atom() -> impl Parser<char, Atom, Error = Simple<char>> {
-    relation()
+fn atom(filter: Filter) -> impl Parser<char, Atom, Error = Simple<char>> {
+    relation(filter)
         .then(
-            term()
+            term(filter)
                 .separated_by(just(',').padded())
                 .allow_trailing()
                 .delimited_by(just('(').padded(), just(')').padded()),
@@ -142,28 +155,21 @@ fn atom() -> impl Parser<char, Atom, Error = Simple<char>> {
         .map(|(rel, terms)| Atom(rel, terms))
 }
 
-fn rule() -> impl Parser<char, Rule, Error = Simple<char>> {
-    atom()
+fn rule(filter: Filter) -> impl Parser<char, Rule, Error = Simple<char>> {
+    atom(filter)
         .then(just(":-").padded())
-        .then(atom().separated_by(just(',').padded()).allow_trailing())
+        .then(
+            atom(filter)
+                .separated_by(just(',').padded())
+                .allow_trailing(),
+        )
         .map(|((head, _), body)| Rule(head, body))
 }
 
-fn statement() -> impl Parser<char, Statement, Error = Simple<char>> {
-    rule()
+fn statement(filter: Filter) -> impl Parser<char, Statement, Error = Simple<char>> {
+    rule(filter)
         .map(|r| Statement::Rule(r))
-        .or(fact().map(|f| Statement::Fact(f)))
-}
-
-pub fn query() -> impl Parser<char, Query, Error = Simple<char>> {
-    just("?-").padded().then(query_no_prompt()).map(|(_, q)| q)
-}
-
-pub fn query_no_prompt() -> impl Parser<char, Query, Error = Simple<char>> {
-    atom()
-        .separated_by(just(',').padded())
-        .map(|atoms| Query(atoms))
-        .then_ignore(end().or(just(".").ignored().then_ignore(end())))
+        .or(fact(filter).map(|f| Statement::Fact(f)))
 }
 
 impl fmt::Display for Rule {
@@ -223,14 +229,14 @@ mod parser_tests {
     #[test]
     fn empty() {
         let input = "";
-        let syntax = program().parse(input).unwrap();
+        let syntax = program(Filter::Off).parse(input).unwrap();
         assert!(syntax.is_empty())
     }
 
     #[test]
     fn parse_fact() {
         let input = " fact ( a, b, c ) ";
-        let syntax = fact().parse(input).unwrap();
+        let syntax = fact(Filter::Off).parse(input).unwrap();
         assert_eq!(
             syntax,
             Fact(
@@ -244,7 +250,7 @@ mod parser_tests {
     fn parse_rule() {
         let input = "ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y)";
 
-        let syntax = rule().parse(input).unwrap();
+        let syntax = rule(Filter::Off).parse(input).unwrap();
         assert_eq!(
             syntax,
             Rule(
@@ -270,7 +276,7 @@ mod parser_tests {
     fn parse_query() {
         let input = "ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y)";
 
-        let syntax = rule().parse(input).unwrap();
+        let syntax = rule(Filter::Off).parse(input).unwrap();
         assert_eq!(
             syntax,
             Rule(
