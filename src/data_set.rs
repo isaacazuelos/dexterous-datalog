@@ -136,8 +136,12 @@ impl std::fmt::Display for DataSet {
             for stable in relation.stable().iter() {
                 for tuple in stable.iter() {
                     write!(f, "{}(", &self.relation_names[rel])?;
-                    for elt in tuple.0.iter().map(|c| &self.constant_names[*c]) {
-                        write!(f, "{elt}, ")?;
+                    let mut iter = tuple.0.iter().map(|c| &self.constant_names[*c]);
+                    if let Some(first) = iter.next() {
+                        write!(f, "{first}")?;
+                    }
+                    for elt in iter {
+                        write!(f, ", {elt}")?;
                     }
                     writeln!(f, ").")?;
                 }
@@ -146,8 +150,12 @@ impl std::fmt::Display for DataSet {
             // recent and to_add are just one generation, so [tuple]
             for tuple in relation.recent().iter() {
                 write!(f, "{}(", &self.relation_names[rel])?;
-                for elt in tuple.0.iter().map(|c| &self.constant_names[*c]) {
-                    write!(f, "{elt}, ")?;
+                let mut iter = tuple.0.iter().map(|c| &self.constant_names[*c]);
+                if let Some(first) = iter.next() {
+                    write!(f, "{first}")?;
+                }
+                for elt in iter {
+                    write!(f, ", {elt}")?;
                 }
                 writeln!(f, ").")?;
             }
