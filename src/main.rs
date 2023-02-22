@@ -69,7 +69,7 @@ fn main() -> Result<()> {
                     .with_source_code(NamedSource::new(filename.to_string_lossy(), input))
             })?;
 
-        data.add_program(&program)?;
+        data.add_program(&program);
 
         if args.query.is_none() {
             println!(
@@ -79,13 +79,12 @@ fn main() -> Result<()> {
         }
     }
 
-    data.run();
-
     if let Some(query) = args.query {
         cli_query(query, data, filter)
     } else if args.repl {
         repl(data, filter)
     } else {
+        data.run();
         println!("{data}");
         Ok(())
     }
@@ -153,7 +152,7 @@ fn repl_step(input: &str, data: &mut DataSet, filter: Filter) -> Result<(), Erro
         .map_err(|errors| (Error::from(errors)))?;
 
     match syntax {
-        Repl::Program(p) => data.add_program(&p),
+        Repl::Program(p) => Ok(data.add_program(&p)),
         Repl::Query(q) => data.run_query(&q),
     }
 }

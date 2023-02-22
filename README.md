@@ -57,7 +57,13 @@ Here's what this looks like _working on my machine™️_.
 - Even without actually using `datafrog`'s magic sauce, there's a _lot_ I'm
   sure I could do to optimize this.
 
-## Post-mortem
+## Since the Jam
+
+I removed datafrog and just used `BTreeSet`, since I'm not too worried about it
+being efficient, didn't actually use datafrog's secret sauce, and just wanted
+to make it actually work.
+
+## Jam Post-mortem
 
 The plan was to have a full REPL, leaning on [`miette`][1] and [`chumsky`][2]
 to make the UI work, and [`datafrog`][3] to do the heavy lifting for the
