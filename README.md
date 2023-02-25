@@ -13,8 +13,9 @@ your left hand on QWERTY. If it sees any left-handed letters, it skips them.
 That means your output doesn't follow from your input, and it becomes unsound
 if you use both hands!
 
-I ran out of time to implement the actual _query_ part, so instead it just
-prints out the whole universe of facts once it's known.
+After the jam I went and tried to clean some of this up a bit. It's still
+pretty messy, but it's at least working now. There are still a lot of
+under-polished loose ends.
 
 ## Build and Install
 
@@ -37,25 +38,6 @@ It'll also start up a REPL unless you pass a `--query` argument, but since
 queries are incomplete, there's not much to do.
 
 Try `--help` too for more.
-
-### Screenshot
-
-Here's what this looks like _working on my machine™️_.
-
-<img width="649" alt="A screenshot showing help, a diagnostic, and a demo file" src="https://user-images.githubusercontent.com/2024439/219977718-02e08b23-1e0b-485e-b809-514fa1dac2cf.png">
-
-### Unfinished
-
-- Queries aren't run, sadly. This would be almost identical to
-  `data_set::Rule::next` too, but I just didn't have the time. Adding rules
-  from the REPL would be pretty easy too.
-
-- The 'left-handed' warning isn't really printing. Not quite sure what I'm
-  doing wrong with `miette`'s `#[related]` here. I pulled it out at the last
-  second to do the filtering instead.
-
-- Even without actually using `datafrog`'s magic sauce, there's a _lot_ I'm
-  sure I could do to optimize this.
 
 ## Since the Jam
 
