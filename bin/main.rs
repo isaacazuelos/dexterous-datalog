@@ -1,17 +1,12 @@
-use chumsky::Parser as ChumskyParser;
-use clap::{Parser, ValueEnum};
+//! The command line interface for the datalog engine.
 
+use clap::{Parser, ValueEnum};
 use miette::{Diagnostic, GraphicalReportHandler, IntoDiagnostic, NamedSource, Report, Result};
 use rustyline::{error::ReadlineError, Editor};
+
 use std::{ffi::OsString, fs};
 
-mod data_set;
-mod error;
-mod parser;
-
-use data_set::DataSet;
-use error::Error;
-use parser::Repl;
+use datalog::{BlockList, DataSet, Error, Program, Query, Repl};
 
 #[derive(Debug, clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -24,9 +19,12 @@ struct Args {
     #[arg(short, long)]
     query: Option<String>,
 
+    /// Filter out left-hand letters for a keyboard layout.
     #[arg(long, value_enum, default_value_t)]
     filter: Filter,
 
+    /// Launch the interactive repl after loading a file. This is the default
+    /// behaviour when no FILENAME is given.
     #[arg(long, short, conflicts_with = "query")]
     repl: bool,
 }
@@ -40,15 +38,14 @@ pub enum Filter {
     Colemak,
 }
 
-impl Filter {
-    pub fn is_allowed(&self, c: char) -> bool {
-        let blocked = match self {
+impl From<Filter> for BlockList {
+    fn from(val: Filter) -> Self {
+        BlockList::from_disallowed(match val {
             Filter::Off => "",
             Filter::Qwerty => "qwertasdfgzxczvb123456",
             Filter::Dvorak => "aoeuptqjkx123456",
             Filter::Colemak => "qwfpgarstdzxcvb12345",
-        };
-        !blocked.contains(c.to_ascii_lowercase())
+        })
     }
 }
 
@@ -57,19 +54,17 @@ fn main() -> Result<()> {
 
     let mut data = DataSet::default();
 
-    let filter = args.filter;
+    let blocked = args.filter.into();
 
     if let Some(filename) = args.filename.as_deref() {
         let input = fs::read_to_string(filename).into_diagnostic()?;
 
-        let program = parser::program(filter)
-            .parse(input.as_str())
-            .map_err(|errors| {
-                Report::from(Error::from(errors))
-                    .with_source_code(NamedSource::new(filename.to_string_lossy(), input))
-            })?;
+        let program = Program::parse(input.as_str(), blocked).map_err(|errors| {
+            Report::from(errors)
+                .with_source_code(NamedSource::new(filename.to_string_lossy(), input))
+        })?;
 
-        data.add_program(&program);
+        data.program(&program);
 
         if args.query.is_none() {
             println!(
@@ -80,9 +75,15 @@ fn main() -> Result<()> {
     }
 
     if let Some(query) = args.query {
-        cli_query(query, data, filter)
-    } else if args.repl {
-        repl(data, filter)
+        let query = Query::parse(query.as_str(), blocked).map_err(|errors| {
+            Report::from(errors).with_source_code(NamedSource::new("--query", query))
+        })?;
+
+        data.run();
+        print_query_answers(&query, &mut data);
+        Ok(())
+    } else if args.repl || args.filename.is_none() {
+        repl(data, blocked)
     } else {
         data.run();
         println!("{data}");
@@ -90,18 +91,19 @@ fn main() -> Result<()> {
     }
 }
 
-fn cli_query(query: String, mut data: DataSet, filter: Filter) -> Result<()> {
-    let query = parser::query_no_prompt(filter)
-        .parse(query.as_str())
-        .map_err(|errors| {
-            Report::from(Error::from(errors)).with_source_code(NamedSource::new("--query", query))
-        })?;
+fn print_query_answers(query: &Query, data: &mut DataSet) {
+    let answers = data.query(query);
 
-    data.run_query(&query)?;
-    Ok(())
+    if answers.is_empty() {
+        println!("<no answers>");
+    } else {
+        for answer in answers {
+            println!("{}", answer);
+        }
+    }
 }
 
-fn repl(mut data: DataSet, filter: Filter) -> Result<()> {
+fn repl(mut data: DataSet, blocked: BlockList) -> Result<()> {
     let mut rl = Editor::<()>::new().into_diagnostic()?;
     let mut line_count = 1;
     let handler = GraphicalReportHandler::new();
@@ -112,7 +114,7 @@ fn repl(mut data: DataSet, filter: Filter) -> Result<()> {
 
         match line {
             Ok(line) => {
-                if let Err(error) = repl_step(&line, &mut data, filter) {
+                if let Err(error) = repl_step(&line, &mut data, blocked) {
                     if line == "quit" || line == "exit" {
                         println!("hint: use control-d to leave");
                     }
@@ -146,13 +148,16 @@ fn repl(mut data: DataSet, filter: Filter) -> Result<()> {
     }
 }
 
-fn repl_step(input: &str, data: &mut DataSet, filter: Filter) -> Result<(), Error> {
-    let syntax = parser::repl(filter)
-        .parse(input)
-        .map_err(|errors| (Error::from(errors)))?;
+fn repl_step(input: &str, data: &mut DataSet, blocked: BlockList) -> Result<(), Error> {
+    let syntax = Repl::parse(input, blocked).map_err(Error::from)?;
 
     match syntax {
-        Repl::Program(p) => Ok(data.add_program(&p)),
-        Repl::Query(q) => data.run_query(&q),
+        Repl::Program(p) => data.program(&p),
+        Repl::Query(query) => {
+            data.run();
+            print_query_answers(&query, data);
+        }
     }
+
+    Ok(())
 }

@@ -5,8 +5,15 @@ authors = ["isaac azuelos <isaac@azuelos.ca>"]
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "dexterous-datalog"
+path = "bin/main.rs"
+
+[workspace]
+
 [dependencies]
-chumsky = "0.9.0"
+datalog = { path = "src/datalog" }
+
 miette = { version = "5.5.0", features = ["fancy"] }
 rustyline = "10.1.1"
 thiserror = "1.0.38"

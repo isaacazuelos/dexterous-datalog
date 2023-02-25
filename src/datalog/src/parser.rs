@@ -1,17 +1,31 @@
-//! The worlds dumbest parser for datalog!
+//! A parser for datalog based on the grammar on [Wikipedia][wiki].
+//!
+//! [wiki]: https://en.wikipedia.org/wiki/datalog#Syntax
 
 use std::fmt;
 
 use chumsky::prelude::*;
 
-use crate::Filter;
+use crate::Error;
 
-pub type Program = Vec<Statement>;
+#[derive(Clone, Copy)]
+pub struct BlockList {
+    blocked: &'static str,
+}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Statement {
-    Fact(Fact),
-    Rule(Rule),
+impl BlockList {
+    /// A block list which doesn't block anything.
+    pub const OFF: BlockList = BlockList { blocked: "" };
+
+    /// Create a new [`BlockList`] which blocks a given set of [`char`]s.
+    pub fn from_disallowed(blocked: &'static str) -> BlockList {
+        BlockList { blocked }
+    }
+
+    /// Does this allow a given character?
+    fn is_allowed(&self, c: char) -> bool {
+        !self.blocked.contains(c.to_ascii_lowercase())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,21 +34,91 @@ pub enum Repl {
     Query(Query),
 }
 
+impl Repl {
+    pub fn parse(input: &str, blocked: BlockList) -> Result<Self, Error> {
+        Self::parser(blocked).parse(input).map_err(Error::from)
+    }
+
+    fn parser(blocked: BlockList) -> impl Parser<char, Self, Error = Simple<char>> {
+        Program::parser(blocked)
+            .map(Repl::Program)
+            .or(Query::parser(blocked).map(Repl::Query))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Program(Vec<Statement>);
+
+impl Program {
+    pub fn parse(input: &str, blocked: BlockList) -> Result<Self, Error> {
+        Self::parser(blocked).parse(input).map_err(Error::from)
+    }
+
+    fn parser(blocked: BlockList) -> impl Parser<char, Self, Error = Simple<char>> {
+        statement(blocked)
+            .separated_by(just('.').padded())
+            .allow_trailing()
+            .then_ignore(end())
+            .map(Program)
+    }
+
+    pub(crate) fn statements(&self) -> &[Statement] {
+        &self.0
+    }
+}
+
+// Things like `father(X, luke)`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Query(pub Vec<Atom>);
+
+impl Query {
+    pub fn parse(input: &str, blocked: BlockList) -> Result<Self, Error> {
+        Self::parser(blocked).parse(input).map_err(Error::from)
+    }
+
+    fn parser(blocked: BlockList) -> impl Parser<char, Self, Error = Simple<char>> {
+        atom(blocked)
+            .separated_by(just(',').padded())
+            .map(Query)
+            .then_ignore(end().or(just(".").ignored().then_ignore(end())))
+    }
+}
+
+// ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Rule(pub Atom, pub Vec<Atom>);
+
+impl Rule {
+    #[cfg(test)]
+    pub(crate) fn parse(input: &str, blocked: BlockList) -> Result<Self, Error> {
+        Self::parser(blocked).parse(input).map_err(Error::from)
+    }
+
+    pub(crate) fn parser(blocked: BlockList) -> impl Parser<char, Rule, Error = Simple<char>> {
+        atom(blocked)
+            .then(just(":-").padded())
+            .then(
+                atom(blocked)
+                    .separated_by(just(',').padded())
+                    .allow_trailing(),
+            )
+            .map(|((head, _), body)| Rule(head, body))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Statement {
+    Fact(Fact),
+    Rule(Rule),
+}
+
 // Things like `parent(padme, luke).`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fact(pub Relation, pub Vec<Const>);
 
-// ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Rule(pub Atom, pub Vec<Atom>);
-
 // ancestor(X, Y)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Atom(pub Relation, pub Vec<Term>);
-
-// Things like `?- father(X, luke)`
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Query(pub Vec<Atom>);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Term {
@@ -51,33 +135,6 @@ pub struct Const(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Var(pub String);
 
-pub fn repl(filter: Filter) -> impl Parser<char, Repl, Error = Simple<char>> {
-    program(filter)
-        .map(|p| Repl::Program(p))
-        .or(query(filter).map(|q| Repl::Query(q)))
-}
-
-pub fn program(filter: Filter) -> impl Parser<char, Program, Error = Simple<char>> {
-    statement(filter)
-        .separated_by(just('.').padded())
-        .allow_trailing()
-        .then_ignore(end())
-}
-
-pub fn query(filter: Filter) -> impl Parser<char, Query, Error = Simple<char>> {
-    just("?-")
-        .padded()
-        .then(query_no_prompt(filter))
-        .map(|(_, q)| q)
-}
-
-pub fn query_no_prompt(filter: Filter) -> impl Parser<char, Query, Error = Simple<char>> {
-    atom(filter)
-        .separated_by(just(',').padded())
-        .map(|atoms| Query(atoms))
-        .then_ignore(end().or(just(".").ignored().then_ignore(end())))
-}
-
 // A name looks like a constant if there's at least one letter, and all letters
 // are lowercase.
 fn is_constant_name(name: &str) -> bool {
@@ -87,9 +144,9 @@ fn is_constant_name(name: &str) -> bool {
             .all(|c| !c.is_ascii_alphabetic() || c.is_ascii_lowercase())
 }
 
-fn name(filter: Filter) -> impl Parser<char, String, Error = Simple<char>> {
+fn name(blocked: BlockList) -> impl Parser<char, String, Error = Simple<char>> {
     text::ident().padded().map(move |name: String| {
-        let left: String = name.chars().filter(|c| filter.is_allowed(*c)).collect();
+        let left: String = name.chars().filter(|c| blocked.is_allowed(*c)).collect();
 
         if left.is_empty() {
             "no".into()
@@ -99,8 +156,8 @@ fn name(filter: Filter) -> impl Parser<char, String, Error = Simple<char>> {
     })
 }
 
-fn term(filter: Filter) -> impl Parser<char, Term, Error = Simple<char>> {
-    name(filter).map(|n| {
+fn term(blocked: BlockList) -> impl Parser<char, Term, Error = Simple<char>> {
+    name(blocked).map(|n| {
         if is_constant_name(&n) {
             Term::Const(Const(n))
         } else {
@@ -109,8 +166,8 @@ fn term(filter: Filter) -> impl Parser<char, Term, Error = Simple<char>> {
     })
 }
 
-fn constant(filter: Filter) -> impl Parser<char, Const, Error = Simple<char>> {
-    name(filter).validate(|n, span, emit| {
+fn constant(blocked: BlockList) -> impl Parser<char, Const, Error = Simple<char>> {
+    name(blocked).validate(|n, span, emit| {
         if !is_constant_name(&n) {
             emit(Simple::custom(
                 span,
@@ -121,8 +178,8 @@ fn constant(filter: Filter) -> impl Parser<char, Const, Error = Simple<char>> {
     })
 }
 
-fn relation(filter: Filter) -> impl Parser<char, Relation, Error = Simple<char>> {
-    name(filter).validate(|n, span, emit| {
+fn relation(blocked: BlockList) -> impl Parser<char, Relation, Error = Simple<char>> {
+    name(blocked).validate(|n, span, emit| {
         if !is_constant_name(&n) {
             emit(Simple::custom(
                 span,
@@ -133,10 +190,10 @@ fn relation(filter: Filter) -> impl Parser<char, Relation, Error = Simple<char>>
     })
 }
 
-fn fact(filter: Filter) -> impl Parser<char, Fact, Error = Simple<char>> {
-    relation(filter)
+fn fact(blocked: BlockList) -> impl Parser<char, Fact, Error = Simple<char>> {
+    relation(blocked)
         .then(
-            constant(filter)
+            constant(blocked)
                 .separated_by(just(',').padded())
                 .allow_trailing()
                 .delimited_by(just('(').padded(), just(')').padded()),
@@ -144,10 +201,10 @@ fn fact(filter: Filter) -> impl Parser<char, Fact, Error = Simple<char>> {
         .map(|(relation, terms)| Fact(relation, terms))
 }
 
-fn atom(filter: Filter) -> impl Parser<char, Atom, Error = Simple<char>> {
-    relation(filter)
+fn atom(blocked: BlockList) -> impl Parser<char, Atom, Error = Simple<char>> {
+    relation(blocked)
         .then(
-            term(filter)
+            term(blocked)
                 .separated_by(just(',').padded())
                 .allow_trailing()
                 .delimited_by(just('(').padded(), just(')').padded()),
@@ -155,21 +212,10 @@ fn atom(filter: Filter) -> impl Parser<char, Atom, Error = Simple<char>> {
         .map(|(rel, terms)| Atom(rel, terms))
 }
 
-fn rule(filter: Filter) -> impl Parser<char, Rule, Error = Simple<char>> {
-    atom(filter)
-        .then(just(":-").padded())
-        .then(
-            atom(filter)
-                .separated_by(just(',').padded())
-                .allow_trailing(),
-        )
-        .map(|((head, _), body)| Rule(head, body))
-}
-
-fn statement(filter: Filter) -> impl Parser<char, Statement, Error = Simple<char>> {
-    rule(filter)
-        .map(|r| Statement::Rule(r))
-        .or(fact(filter).map(|f| Statement::Fact(f)))
+fn statement(blocked: BlockList) -> impl Parser<char, Statement, Error = Simple<char>> {
+    Rule::parser(blocked)
+        .map(Statement::Rule)
+        .or(fact(blocked).map(Statement::Fact))
 }
 
 impl fmt::Display for Rule {
@@ -229,28 +275,15 @@ mod parser_tests {
     #[test]
     fn empty() {
         let input = "";
-        let syntax = program(Filter::Off).parse(input).unwrap();
-        assert!(syntax.is_empty())
+        let syntax = Program::parse(input, BlockList::OFF).unwrap();
+        assert_eq!(syntax, Program(vec![]));
     }
 
     #[test]
-    fn parse_fact() {
-        let input = " fact ( a, b, c ) ";
-        let syntax = fact(Filter::Off).parse(input).unwrap();
-        assert_eq!(
-            syntax,
-            Fact(
-                Relation("fact".into()),
-                vec![Const("a".into()), Const("b".into()), Const("c".into()),]
-            )
-        )
-    }
-
-    #[test]
-    fn parse_rule() {
+    fn parse_query() {
         let input = "ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y)";
 
-        let syntax = rule(Filter::Off).parse(input).unwrap();
+        let syntax = Rule::parse(input, BlockList::OFF).unwrap();
         assert_eq!(
             syntax,
             Rule(
@@ -273,10 +306,23 @@ mod parser_tests {
     }
 
     #[test]
-    fn parse_query() {
+    fn parse_fact() {
+        let input = " fact ( a, b, c ) ";
+        let syntax = fact(BlockList::OFF).parse(input).unwrap();
+        assert_eq!(
+            syntax,
+            Fact(
+                Relation("fact".into()),
+                vec![Const("a".into()), Const("b".into()), Const("c".into()),]
+            )
+        )
+    }
+
+    #[test]
+    fn parse_rule() {
         let input = "ancestor(X, Y) :- parent(X, Z), ancestor(Z, Y)";
 
-        let syntax = rule(Filter::Off).parse(input).unwrap();
+        let syntax = Rule::parse(input, BlockList::OFF).unwrap();
         assert_eq!(
             syntax,
             Rule(

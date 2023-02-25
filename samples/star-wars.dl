@@ -8,10 +8,10 @@ parent(X, Y) :- father(X, Y).
 
 sibling(X, Y) :- parent(P, X), parent(P, Y).
 
-alias(anakin, vader).
-alias(X, Y) :- aliax(Y, X).
+alias(vader, anakin).
+alias(X, Y) :- alias(Y, X).
 
-father(X, Y) :- father(Z, Y), alias(Z, X).
+father(F1, B) :- father(F2, B), alias(F1, F2).
 
 kissed(anakin, padme).
 kissed(leia, han).

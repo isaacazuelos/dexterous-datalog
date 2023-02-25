@@ -66,7 +66,7 @@ where
 
 impl From<Simple<char>> for Error {
     fn from(error: Simple<char>) -> Self {
-        Error::new(format!("syntax error")).with_labeled_span(
+        Error::new("syntax error".to_string()).with_labeled_span(
             error.span().start(),
             error.span().len(),
             format!("{error}"),

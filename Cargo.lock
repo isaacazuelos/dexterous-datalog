@@ -146,11 +146,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "dexterous-datalog"
+name = "datalog"
 version = "0.1.0"
 dependencies = [
  "chumsky",
+ "miette",
+ "thiserror",
+]
+
+[[package]]
+name = "dexterous-datalog"
+version = "0.1.0"
+dependencies = [
  "clap",
+ "datalog",
  "miette",
  "rustyline",
  "thiserror",
